@@ -8,7 +8,7 @@ const { OpenAI } = require('openai');
 const app = express();
 app.use(cors());
 
-// RUTA CLAVE PARA RENDER: Permite que el servidor confirme que está vivo
+// RUTA CLAVE PARA RENDER: Confirmación de servicio activo
 app.get('/', (req, res) => {
   res.send('✅ Servidor Backend de Coltons funcionando correctamente.');
 });
@@ -31,10 +31,15 @@ io.on('connection', (socket) => {
   socket.emit('update_players', players);
   socket.emit('update_prize', currentPrize);
 
-  socket.on('set_prize', (newPrize) => {
+  // CORRECCIÓN PREMIO: Escucha tanto 'set_prize' como 'update_prize' para evitar desincronización
+  const handlePrizeUpdate = (newPrize) => {
     currentPrize = newPrize;
     io.emit('update_prize', currentPrize);
-  });
+    console.log(`🎁 Premio actualizado: ${currentPrize}`);
+  };
+
+  socket.on('set_prize', handlePrizeUpdate);
+  socket.on('update_prize', handlePrizeUpdate);
 
   socket.on('join_game', (userData) => {
     if (players.length < 20 && !gameActive) {
@@ -100,12 +105,19 @@ io.on('connection', (socket) => {
     players.forEach(p => p.answeredCurrentQ = false);
   });
 
-  socket.on('submit_answer', (answerIndex) => {
+  // CORRECCIÓN PUNTOS: Acepta tanto el índice numérico (0, 1, 2) como el texto directo
+  socket.on('submit_answer', (answerData) => {
     const player = players.find(p => p.id === socket.id);
     if (player && activeQuestions.length > 0 && !player.answeredCurrentQ) {
       player.answeredCurrentQ = true;
       const currentQ = activeQuestions[currentQuestionIndex];
-      const selectedOption = currentQ.options[answerIndex];
+
+      let selectedOption;
+      if (typeof answerData === 'number') {
+        selectedOption = currentQ.options[answerData];
+      } else {
+        selectedOption = answerData;
+      }
 
       const timeTaken = (Date.now() - questionStartTime) / 1000; 
       const timeRemaining = Math.max(0, 10 - timeTaken); 
@@ -114,10 +126,10 @@ io.on('connection', (socket) => {
         const speedBonus = Math.round((timeRemaining / 10) * 1000);
         const totalEarned = 1000 + speedBonus;
         player.score += totalEarned;
-        console.log(`✅ ${player.name} acertó en ${timeTaken.toFixed(1)}s (+${totalEarned} pts)`);
+        console.log(`✅ ${player.name} acertó ("${selectedOption}") en ${timeTaken.toFixed(1)}s (+${totalEarned} pts)`);
       } else {
         player.score = Math.max(0, player.score - 300);
-        console.log(`❌ ${player.name} falló (-300 pts)`);
+        console.log(`❌ ${player.name} falló con "${selectedOption}" (Correcta: "${currentQ.correct}") (-300 pts)`);
       }
       
       io.emit('update_players', players);
@@ -140,7 +152,6 @@ io.on('connection', (socket) => {
   });
 });
 
-// CLAVE PARA RENDER: Escuchar en la IP '0.0.0.0' y el puerto asignado
 const PORT = process.env.PORT || 3001;
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`✅ Servidor de Coltons corriendo en el puerto ${PORT}`);
