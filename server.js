@@ -8,7 +8,6 @@ const { OpenAI } = require('openai');
 const app = express();
 app.use(cors());
 
-// RUTA CLAVE PARA RENDER: Confirmación de servicio activo
 app.get('/', (req, res) => {
   res.send('✅ Servidor Backend de Coltons funcionando correctamente.');
 });
@@ -26,16 +25,14 @@ let questionStartTime = 0;
 let currentPrize = "🍕 ¡1 PIZZA GRATIS!"; 
 
 io.on('connection', (socket) => {
-  console.log(`🔌 Un usuario se ha conectado: ${socket.id}`);
+  console.log(`🔌 Usuario conectado: ${socket.id}`);
   
   socket.emit('update_players', players);
   socket.emit('update_prize', currentPrize);
 
-  // CORRECCIÓN PREMIO: Escucha tanto 'set_prize' como 'update_prize' para evitar desincronización
   const handlePrizeUpdate = (newPrize) => {
     currentPrize = newPrize;
     io.emit('update_prize', currentPrize);
-    console.log(`🎁 Premio actualizado: ${currentPrize}`);
   };
 
   socket.on('set_prize', handlePrizeUpdate);
@@ -50,37 +47,27 @@ io.on('connection', (socket) => {
 
   socket.on('generate_questions', async (topic) => {
     try {
-      console.log(`🧠 Generando 5 preguntas sobre: ${topic}...`);
       const response = await openai.chat.completions.create({
         model: "gpt-4o-mini",
         response_format: { type: "json_object" },
         messages: [
           { 
             role: "system", 
-            content: `Eres el motor de trivia de un casino. TU ÚNICA TAREA ES DEVOLVER UN JSON CON EXACTAMENTE 5 PREGUNTAS. NUNCA DEVUELVAS 3 PREGUNTAS. La dificultad debe ser extrema (detalles curiosos, fechas, datos raros). Las 3 opciones incorrectas deben parecer muy reales.
-            Usa exactamente este formato:
+            content: `Eres el motor de trivia de un casino. DEVUELVE UN JSON CON EXACTAMENTE 5 PREGUNTAS. Dificultad alta.
+            Formato:
             {
               "preguntas": [
-                {"q": "Pregunta 1", "options": ["A", "B", "C", "D"], "correct": "A"},
-                {"q": "Pregunta 2", "options": ["A", "B", "C", "D"], "correct": "B"},
-                {"q": "Pregunta 3", "options": ["A", "B", "C", "D"], "correct": "C"},
-                {"q": "Pregunta 4", "options": ["A", "B", "C", "D"], "correct": "D"},
-                {"q": "Pregunta 5", "options": ["A", "B", "C", "D"], "correct": "A"}
+                {"q": "Pregunta 1", "options": ["A", "B", "C", "D"], "correct": "A"}
               ]
             }`
           },
-          {
-            role: "user",
-            content: `Genera el JSON con las 5 preguntas difíciles sobre el tema: "${topic}".`
-          }
+          { role: "user", content: `Preguntas sobre: "${topic}".` }
         ]
       });
       
       const result = JSON.parse(response.choices[0].message.content);
-      console.log(`🤖 OpenAI respondió con: ${result.preguntas.length} preguntas.`);
       socket.emit('questions_ready', result.preguntas);
     } catch (error) {
-      console.error("❌ Error con OpenAI:", error);
       socket.emit('questions_error');
     }
   });
@@ -105,33 +92,40 @@ io.on('connection', (socket) => {
     players.forEach(p => p.answeredCurrentQ = false);
   });
 
-  // CORRECCIÓN PUNTOS: Acepta tanto el índice numérico (0, 1, 2) como el texto directo
+  // EVALUACIÓN DE RESPUESTA Y PUNTOS
   socket.on('submit_answer', (answerData) => {
     const player = players.find(p => p.id === socket.id);
     if (player && activeQuestions.length > 0 && !player.answeredCurrentQ) {
       player.answeredCurrentQ = true;
       const currentQ = activeQuestions[currentQuestionIndex];
 
-      let selectedOption;
-      if (typeof answerData === 'number') {
-        selectedOption = currentQ.options[answerData];
-      } else {
-        selectedOption = answerData;
-      }
+      let selectedOption = typeof answerData === 'number' ? currentQ.options[answerData] : answerData;
+
+      // Comparación limpia (sin importar espacios ni mayúsculas/minúsculas)
+      const cleanSelected = String(selectedOption).trim().toLowerCase();
+      const cleanCorrect = String(currentQ.correct).trim().toLowerCase();
+      const isCorrect = cleanSelected === cleanCorrect;
 
       const timeTaken = (Date.now() - questionStartTime) / 1000; 
       const timeRemaining = Math.max(0, 10 - timeTaken); 
 
-      if (selectedOption === currentQ.correct) {
+      if (isCorrect) {
         const speedBonus = Math.round((timeRemaining / 10) * 1000);
         const totalEarned = 1000 + speedBonus;
         player.score += totalEarned;
-        console.log(`✅ ${player.name} acertó ("${selectedOption}") en ${timeTaken.toFixed(1)}s (+${totalEarned} pts)`);
       } else {
         player.score = Math.max(0, player.score - 300);
-        console.log(`❌ ${player.name} falló con "${selectedOption}" (Correcta: "${currentQ.correct}") (-300 pts)`);
       }
       
+      // Enviamos el resultado individual al jugador para que pinte su botón verde/rojo
+      socket.emit('answer_result', {
+        isCorrect,
+        selectedOption,
+        correctOption: currentQ.correct,
+        newScore: player.score
+      });
+
+      // Transmitimos a todos la lista actualizada de jugadores con sus nuevos puntos
       io.emit('update_players', players);
     }
   });
@@ -143,7 +137,6 @@ io.on('connection', (socket) => {
     currentQuestionIndex = 0;
     io.emit('update_players', players);
     io.emit('game_reset');
-    console.log('🔄 Partida reiniciada.');
   });
 
   socket.on('disconnect', () => {
@@ -153,6 +146,4 @@ io.on('connection', (socket) => {
 });
 
 const PORT = process.env.PORT || 3001;
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(`✅ Servidor de Coltons corriendo en el puerto ${PORT}`);
-});
+server.listen(PORT, '0.0.0.0');
