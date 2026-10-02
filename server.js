@@ -23,7 +23,7 @@ let activeQuestions = [];
 let currentQuestionIndex = 0;
 let questionStartTime = 0;
 let currentPrize = "🍕 ¡1 PIZZA GRATIS!"; 
-let currentTopic = "CULTURA GENERAL"; // Nuevo estado para el tema
+let currentTopic = "CULTURA GENERAL";
 
 io.on('connection', (socket) => {
   console.log(`🔌 Usuario conectado: ${socket.id}`);
@@ -32,7 +32,6 @@ io.on('connection', (socket) => {
   socket.emit('update_prize', currentPrize);
   socket.emit('update_topic', currentTopic);
 
-  // PUENTES DE ACTUALIZACIÓN
   const handlePrizeUpdate = (newPrize) => {
     currentPrize = newPrize;
     io.emit('update_prize', currentPrize);
@@ -54,7 +53,6 @@ io.on('connection', (socket) => {
 
   socket.on('generate_questions', async (topic) => {
     try {
-      // IA GENERARÁ 10 PREGUNTAS AHORA
       const response = await openai.chat.completions.create({
         model: "gpt-4o-mini",
         response_format: { type: "json_object" },
@@ -65,10 +63,10 @@ io.on('connection', (socket) => {
             Formato exacto:
             {
               "preguntas": [
-                {"q": "Pregunta 1", "options": ["A", "B", "C", "D"], "correct": "A"}
-                // ... hasta llegar a 10
+                {"q": "¿Quién pintó la Mona Lisa?", "options": ["Vincent van Gogh", "Leonardo da Vinci", "Pablo Picasso", "Claude Monet"], "correct": "Leonardo da Vinci"}
               ]
-            }`
+            }
+            IMPORTANTE: El valor de "correct" DEBE ser el texto exacto de la respuesta correcta. NUNCA uses "A", "B", "C" o "D".`
           },
           { role: "user", content: `Genera 10 preguntas sobre: "${topic}".` }
         ]
@@ -115,7 +113,6 @@ io.on('connection', (socket) => {
 
   socket.on('submit_answer', (answerData) => {
     const player = players.find(p => p.id === socket.id);
-    // Solo permitimos responder si NO está eliminado
     if (player && activeQuestions.length > 0 && !player.answeredCurrentQ && !player.eliminated) {
       player.answeredCurrentQ = true;
       const currentQ = activeQuestions[currentQuestionIndex];
