@@ -23,45 +23,54 @@ let activeQuestions = [];
 let currentQuestionIndex = 0;
 let questionStartTime = 0;
 let currentPrize = "🍕 ¡1 PIZZA GRATIS!"; 
+let currentTopic = "CULTURA GENERAL"; // Nuevo estado para el tema
 
 io.on('connection', (socket) => {
   console.log(`🔌 Usuario conectado: ${socket.id}`);
   
   socket.emit('update_players', players);
   socket.emit('update_prize', currentPrize);
+  socket.emit('update_topic', currentTopic);
 
+  // PUENTES DE ACTUALIZACIÓN
   const handlePrizeUpdate = (newPrize) => {
     currentPrize = newPrize;
     io.emit('update_prize', currentPrize);
   };
-
   socket.on('set_prize', handlePrizeUpdate);
   socket.on('update_prize', handlePrizeUpdate);
 
+  socket.on('update_topic', (topic) => {
+    currentTopic = topic;
+    io.emit('update_topic', currentTopic);
+  });
+
   socket.on('join_game', (userData) => {
     if (players.length < 20 && !gameActive) {
-      players.push({ id: socket.id, ...userData, score: 0, answeredCurrentQ: false });
+      players.push({ id: socket.id, ...userData, score: 0, answeredCurrentQ: false, eliminated: false });
       io.emit('update_players', players);
     }
   });
 
   socket.on('generate_questions', async (topic) => {
     try {
+      // IA GENERARÁ 10 PREGUNTAS AHORA
       const response = await openai.chat.completions.create({
         model: "gpt-4o-mini",
         response_format: { type: "json_object" },
         messages: [
           { 
             role: "system", 
-            content: `Eres el motor de trivia de un casino. DEVUELVE UN JSON CON EXACTAMENTE 5 PREGUNTAS. Dificultad alta.
-            Formato:
+            content: `Eres el motor de trivia de un casino. DEVUELVE UN JSON CON EXACTAMENTE 10 PREGUNTAS (Para 2 rondas de 5). Dificultad alta.
+            Formato exacto:
             {
               "preguntas": [
                 {"q": "Pregunta 1", "options": ["A", "B", "C", "D"], "correct": "A"}
+                // ... hasta llegar a 10
               ]
             }`
           },
-          { role: "user", content: `Preguntas sobre: "${topic}".` }
+          { role: "user", content: `Genera 10 preguntas sobre: "${topic}".` }
         ]
       });
       
@@ -81,6 +90,7 @@ io.on('connection', (socket) => {
     players.forEach(p => {
       p.score = 0;
       p.answeredCurrentQ = false;
+      p.eliminated = false;
     });
 
     io.emit('game_started', questions);
@@ -89,19 +99,29 @@ io.on('connection', (socket) => {
   socket.on('sync_question', (index) => {
     currentQuestionIndex = index;
     questionStartTime = Date.now(); 
+    
+    // CORTE DE SUPERVIVENCIA: Al llegar a la pregunta 6 (índice 5), eliminamos a los de menos de 2000 puntos
+    if (index === 5) {
+      players.forEach(p => {
+        if (p.score < 2000) {
+          p.eliminated = true;
+        }
+      });
+      io.emit('update_players', players);
+    }
+
     players.forEach(p => p.answeredCurrentQ = false);
   });
 
-  // EVALUACIÓN DE RESPUESTA Y PUNTOS
   socket.on('submit_answer', (answerData) => {
     const player = players.find(p => p.id === socket.id);
-    if (player && activeQuestions.length > 0 && !player.answeredCurrentQ) {
+    // Solo permitimos responder si NO está eliminado
+    if (player && activeQuestions.length > 0 && !player.answeredCurrentQ && !player.eliminated) {
       player.answeredCurrentQ = true;
       const currentQ = activeQuestions[currentQuestionIndex];
 
       let selectedOption = typeof answerData === 'number' ? currentQ.options[answerData] : answerData;
 
-      // Comparación limpia (sin importar espacios ni mayúsculas/minúsculas)
       const cleanSelected = String(selectedOption).trim().toLowerCase();
       const cleanCorrect = String(currentQ.correct).trim().toLowerCase();
       const isCorrect = cleanSelected === cleanCorrect;
@@ -117,7 +137,6 @@ io.on('connection', (socket) => {
         player.score = Math.max(0, player.score - 300);
       }
       
-      // Enviamos el resultado individual al jugador para que pinte su botón verde/rojo
       socket.emit('answer_result', {
         isCorrect,
         selectedOption,
@@ -125,7 +144,6 @@ io.on('connection', (socket) => {
         newScore: player.score
       });
 
-      // Transmitimos a todos la lista actualizada de jugadores con sus nuevos puntos
       io.emit('update_players', players);
     }
   });
