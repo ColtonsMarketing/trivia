@@ -44,17 +44,48 @@ io.on('connection', (socket) => {
     io.to(playerId).emit('kicked'); // Le avisa al celular que lo sacaron
   });
 
-  socket.on('generate_questions', async (topic) => {
+ socket.on('generate_questions', async (topic) => {
     try {
       const response = await openai.chat.completions.create({
-        model: "gpt-4o-mini", response_format: { type: "json_object" },
+        model: "gpt-4o-mini",
+        temperature: 1.1, // 🔥 NUEVO: Alto nivel de aleatoriedad para no repetir preguntas
+        response_format: { type: "json_object" },
         messages: [
-          { role: "system", content: `Eres un motor de trivia. DEVUELVE UN JSON CON EXACTAMENTE 10 PREGUNTAS. Formato: { "preguntas": [ {"q": "Pregunta", "options": ["A", "B", "C", "D"], "correct": "Respuesta Exacta"} ] } IMPORTANTE: "correct" DEBE ser el texto exacto.` },
-          { role: "user", content: `Genera 10 preguntas sobre: "${topic}".` }
+          { 
+            role: "system", 
+            content: `Eres el mejor investigador y creador de trivias del mundo. Tu tarea es generar 10 preguntas desafiantes.
+            
+            REGLAS ESTRICTAS DE CALIDAD:
+            1. VERACIDAD ABSOLUTA: Verifica tus datos históricos antes de responder. (Ejemplo: El Club de Fútbol Monterrey se fundó en 1945, no inventes fechas).
+            2. FORMATO EXACTO: El valor dentro de "correct" DEBE ser idéntico a uno de los strings dentro de "options".
+            3. CERO PREFIJOS: TIENES ESTRICTAMENTE PROHIBIDO usar prefijos como "A)", "B:", "C: ", o "Respuesta: ". Solo devuelve el texto limpio.
+            4. VARIEDAD: No uses preguntas cliché. Hazlas interesantes y creativas.
+
+            Formato exacto requerido:
+            {
+              "preguntas": [
+                {
+                  "q": "¿En qué año se fundó el Club de Fútbol Monterrey (Rayados)?", 
+                  "options": ["1945", "1905", "1960", "1950"], 
+                  "correct": "1945"
+                }
+              ]
+            }`
+          },
+          { 
+            role: "user", 
+            // 🔥 NUEVO: Le enviamos la hora exacta (Date.now) para forzar a que el prompt siempre sea diferente y no recicle memoria.
+            content: `Genera 10 preguntas TOTALMENTE NUEVAS sobre: "${topic}". (Código de sesión único: ${Date.now()})` 
+          }
         ]
       });
-      socket.emit('questions_ready', JSON.parse(response.choices[0].message.content).preguntas);
-    } catch (error) { socket.emit('questions_error'); }
+      
+      const result = JSON.parse(response.choices[0].message.content);
+      socket.emit('questions_ready', result.preguntas);
+    } catch (error) { 
+      console.error("Error generando preguntas:", error);
+      socket.emit('questions_error'); 
+    }
   });
 
   socket.on('start_game', (questions) => {
