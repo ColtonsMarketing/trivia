@@ -3,15 +3,18 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
-const { OpenAI } = require('openai');
+// 🔥 IMPORTAMOS GEMINI
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const app = express();
 app.use(cors());
-app.get('/', (req, res) => res.send('✅ Servidor Backend OK.'));
+app.get('/', (req, res) => res.send('✅ Servidor Backend OK (Modo Gemini Pro).'));
 
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*", methods: ["GET", "POST"] } });
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+// 🔥 INICIALIZAMOS GEMINI
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 let players = [];
 let gameActive = false;
@@ -19,7 +22,6 @@ let activeQuestions = [];
 let currentQuestionIndex = 0;
 let questionStartTime = 0;
 let currentTopic = "CULTURA GENERAL";
-// NUEVO: 3 Premios
 let currentPrizes = { first: "🍕 1 PIZZA", second: "🍺 2 CERVEZAS", third: "🍟 PAPAS" };
 
 io.on('connection', (socket) => {
@@ -37,61 +39,56 @@ io.on('connection', (socket) => {
     }
   });
 
-  // NUEVO: Expulsar Jugador
   socket.on('kick_player', (playerId) => {
     players = players.filter(p => p.id !== playerId);
     io.emit('update_players', players);
-    io.to(playerId).emit('kicked'); // Le avisa al celular que lo sacaron
+    io.to(playerId).emit('kicked');
   });
 
+  // 🔥 NUEVO MOTOR DE GENERACIÓN CON GEMINI PRO
   socket.on('generate_questions', async (topic) => {
     try {
-      const response = await openai.chat.completions.create({
-        model: "gpt-4o",
-        temperature: 0.9, // 🔥 Ajustado para creatividad sin romper el formato
-        response_format: { type: "json_object" },
-        messages: [
-          { 
-            role: "system", 
-            content: `Eres el mejor investigador y creador de trivias del mundo. Tu tarea es generar 10 preguntas desafiantes.
-            
-            REGLAS ESTRICTAS DE CALIDAD:
-            1. VERACIDAD ABSOLUTA: Verifica tus datos históricos antes de responder. (Ejemplo: El Club de Fútbol Monterrey se fundó en 1945, no inventes fechas).
-            2. FORMATO EXACTO: El valor dentro de "correct" DEBE ser idéntico a uno de los strings dentro de "options".
-            3. CERO PREFIJOS: TIENES ESTRICTAMENTE PROHIBIDO usar prefijos como "A)", "B:", "C: ", o "Respuesta: ". Solo devuelve el texto limpio.
-            4. VARIEDAD: No uses preguntas cliché. Hazlas interesantes y creativas.
+      // Usamos el modelo 1.5-pro (Máxima inteligencia y razonamiento)
+      const model = genAI.getGenerativeModel({ 
+        model: "gemini-1.5-pro",
+        generationConfig: { 
+          temperature: 0.2, // Creatividad baja para forzar exactitud en datos duros
+          responseMimeType: "application/json" // Fuerza a la API a devolver un JSON válido
+        } 
+      });
 
-            DEVUELVE UN JSON con el formato exacto requerido:
-            {
-              "preguntas": [
-                {
-                  "q": "¿En qué año se fundó el Club de Fútbol Monterrey (Rayados)?", 
-                  "options": ["1945", "1905", "1960", "1950"], 
-                  "correct": "1945"
-                }
-              ]
-            }`
-          },
-          { 
-            role: "user", 
-            // 🔥 Le enviamos la hora exacta (Date.now) para forzar preguntas nuevas en cada petición
-            content: `Genera 10 preguntas TOTALMENTE NUEVAS sobre: "${topic}". (Código de sesión único: ${Date.now()})` 
+      const prompt = `Eres un experto en trivias y un historiador riguroso. Tu tarea es generar 10 preguntas desafiantes y ESTRICTAMENTE VERIFICADAS sobre: "${topic}".
+            
+      REGLAS DE ORO:
+      1. NO INVENTES DATOS. Usa hechos históricos comprobables. Si tienes dudas de una fecha o dato, elige otra pregunta.
+      2. FORMATO EXACTO: El valor de "correct" DEBE ser exactamente idéntico a uno de los strings dentro del arreglo "options".
+      3. CERO PREFIJOS: Prohibido usar "A)", "B:", "C: ". Solo devuelve el texto de la opción limpia.
+      4. VARIEDAD: Genera preguntas totalmente nuevas. (Código de sesión único: ${Date.now()})
+
+      ESTRUCTURA JSON REQUERIDA:
+      {
+        "preguntas": [
+          {
+            "q": "¿En qué año se fundó el Club de Fútbol Monterrey (Rayados)?", 
+            "options": ["1945", "1905", "1960", "1950"], 
+            "correct": "1945"
           }
         ]
-      });
+      }`;
+
+      const result = await model.generateContent(prompt);
+      const responseText = result.response.text();
       
-      // 🔥 LIMPIEZA DE JSON: Evita errores si la IA agrega etiquetas markdown por accidente (```json)
-      const rawContent = response.choices[0].message.content;
-      const cleanContent = rawContent.replace(/```json/g, '').replace(/```/g, '').trim();
+      // Limpieza preventiva (por si acaso el modelo devuelve etiquetas markdown a pesar del responseMimeType)
+      const cleanContent = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
+      const parsedData = JSON.parse(cleanContent);
       
-      const result = JSON.parse(cleanContent);
-      
-      // 🔥 GUILLOTINA: Cortamos a exactamente 10 preguntas por si la IA envía de más y rompe el reloj
-      const preguntasExactas = result.preguntas.slice(0, 10);
+      // Guillotina a exactamente 10 preguntas
+      const preguntasExactas = parsedData.preguntas.slice(0, 10);
       
       socket.emit('questions_ready', preguntasExactas);
     } catch (error) { 
-      console.error("Error generando preguntas:", error);
+      console.error("Error generando preguntas con Gemini Pro:", error);
       socket.emit('questions_error'); 
     }
   });
