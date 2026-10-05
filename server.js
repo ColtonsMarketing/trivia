@@ -7,7 +7,7 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const app = express();
 app.use(cors());
-app.get('/', (req, res) => res.send('✅ Servidor Backend OK (Modo Gemini Pro).'));
+app.get('/', (req, res) => res.send('✅ Servidor Backend OK (Modo Gemini Flash).'));
 
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*", methods: ["GET", "POST"] } });
@@ -45,8 +45,9 @@ io.on('connection', (socket) => {
 
   socket.on('generate_questions', async (topic) => {
     try {
+      // 🔥 CAMBIO AL MODELO FLASH: 100% disponible, rápido y preciso.
       const model = genAI.getGenerativeModel({ 
-        model: "gemini-1.5-pro-latest",
+        model: "gemini-1.5-flash",
         generationConfig: { 
           temperature: 0.2, 
           responseMimeType: "application/json" 
@@ -82,7 +83,7 @@ io.on('connection', (socket) => {
       
       socket.emit('questions_ready', preguntasExactas);
     } catch (error) { 
-      console.error("Error generando preguntas con Gemini Pro:", error);
+      console.error("Error generando preguntas con Gemini Flash:", error);
       socket.emit('questions_error'); 
     }
   });
