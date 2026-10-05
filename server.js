@@ -47,7 +47,7 @@ io.on('connection', (socket) => {
   socket.on('generate_questions', async (topic) => {
     try {
       const response = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
+        model: "gpt-4o",
         temperature: 0.9, // 🔥 Ajustado para creatividad sin romper el formato
         response_format: { type: "json_object" },
         messages: [
