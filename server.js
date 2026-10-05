@@ -3,7 +3,6 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
-// 🔥 IMPORTAMOS GEMINI
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const app = express();
@@ -13,7 +12,6 @@ app.get('/', (req, res) => res.send('✅ Servidor Backend OK (Modo Gemini Pro).'
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*", methods: ["GET", "POST"] } });
 
-// 🔥 INICIALIZAMOS GEMINI
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 let players = [];
@@ -45,15 +43,13 @@ io.on('connection', (socket) => {
     io.to(playerId).emit('kicked');
   });
 
-  // 🔥 NUEVO MOTOR DE GENERACIÓN CON GEMINI PRO
   socket.on('generate_questions', async (topic) => {
     try {
-      // Usamos el modelo 1.5-pro (Máxima inteligencia y razonamiento)
       const model = genAI.getGenerativeModel({ 
-        model: "gemini-1.5-pro",
+        model: "gemini-1.5-pro-latest",
         generationConfig: { 
-          temperature: 0.2, // Creatividad baja para forzar exactitud en datos duros
-          responseMimeType: "application/json" // Fuerza a la API a devolver un JSON válido
+          temperature: 0.2, 
+          responseMimeType: "application/json" 
         } 
       });
 
@@ -79,11 +75,9 @@ io.on('connection', (socket) => {
       const result = await model.generateContent(prompt);
       const responseText = result.response.text();
       
-      // Limpieza preventiva (por si acaso el modelo devuelve etiquetas markdown a pesar del responseMimeType)
       const cleanContent = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
       const parsedData = JSON.parse(cleanContent);
       
-      // Guillotina a exactamente 10 preguntas
       const preguntasExactas = parsedData.preguntas.slice(0, 10);
       
       socket.emit('questions_ready', preguntasExactas);
