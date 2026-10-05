@@ -44,11 +44,11 @@ io.on('connection', (socket) => {
     io.to(playerId).emit('kicked'); // Le avisa al celular que lo sacaron
   });
 
- socket.on('generate_questions', async (topic) => {
+  socket.on('generate_questions', async (topic) => {
     try {
       const response = await openai.chat.completions.create({
         model: "gpt-4o-mini",
-        temperature: 1.1, // 🔥 NUEVO: Alto nivel de aleatoriedad para no repetir preguntas
+        temperature: 0.9, // 🔥 Ajustado para creatividad sin romper el formato
         response_format: { type: "json_object" },
         messages: [
           { 
@@ -61,7 +61,7 @@ io.on('connection', (socket) => {
             3. CERO PREFIJOS: TIENES ESTRICTAMENTE PROHIBIDO usar prefijos como "A)", "B:", "C: ", o "Respuesta: ". Solo devuelve el texto limpio.
             4. VARIEDAD: No uses preguntas cliché. Hazlas interesantes y creativas.
 
-            Formato exacto requerido:
+            DEVUELVE UN JSON con el formato exacto requerido:
             {
               "preguntas": [
                 {
@@ -74,14 +74,22 @@ io.on('connection', (socket) => {
           },
           { 
             role: "user", 
-            // 🔥 NUEVO: Le enviamos la hora exacta (Date.now) para forzar a que el prompt siempre sea diferente y no recicle memoria.
+            // 🔥 Le enviamos la hora exacta (Date.now) para forzar preguntas nuevas en cada petición
             content: `Genera 10 preguntas TOTALMENTE NUEVAS sobre: "${topic}". (Código de sesión único: ${Date.now()})` 
           }
         ]
       });
       
-      const result = JSON.parse(response.choices[0].message.content);
-      socket.emit('questions_ready', result.preguntas);
+      // 🔥 LIMPIEZA DE JSON: Evita errores si la IA agrega etiquetas markdown por accidente (```json)
+      const rawContent = response.choices[0].message.content;
+      const cleanContent = rawContent.replace(/```json/g, '').replace(/```/g, '').trim();
+      
+      const result = JSON.parse(cleanContent);
+      
+      // 🔥 GUILLOTINA: Cortamos a exactamente 10 preguntas por si la IA envía de más y rompe el reloj
+      const preguntasExactas = result.preguntas.slice(0, 10);
+      
+      socket.emit('questions_ready', preguntasExactas);
     } catch (error) { 
       console.error("Error generando preguntas:", error);
       socket.emit('questions_error'); 
@@ -135,4 +143,5 @@ io.on('connection', (socket) => {
   });
 });
 
-server.listen(process.env.PORT || 3001, '0.0.0.0', () => console.log(`✅ Servidor OK`));
+const PORT = process.env.PORT || 3001;
+server.listen(PORT, '0.0.0.0', () => console.log(`✅ Servidor OK en puerto ${PORT}`));
