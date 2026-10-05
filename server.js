@@ -3,17 +3,15 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { OpenAI } = require('openai');
 
 const app = express();
 app.use(cors());
-app.get('/', (req, res) => res.send('✅ Servidor Backend OK (Modo Gemini Pro).'));
+app.get('/', (req, res) => res.send('✅ Servidor Backend OK (Modo Seguro - OpenAI GPT-4o).'));
 
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*", methods: ["GET", "POST"] } });
-
-// Tu llave Pro de Render se inyecta aquí automáticamente
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 let players = [];
 let gameActive = false;
@@ -46,45 +44,48 @@ io.on('connection', (socket) => {
 
   socket.on('generate_questions', async (topic) => {
     try {
-      // 🔥 AHORA SÍ: El código pide explícitamente el modelo PRO
-      const model = genAI.getGenerativeModel({ 
-        model: "gemini-1.5-pro-002",
-        generationConfig: { 
-          temperature: 0.2, 
-          responseMimeType: "application/json" 
-        } 
-      });
-
-      const prompt = `Eres un experto en trivias y un historiador riguroso. Tu tarea es generar 10 preguntas desafiantes y ESTRICTAMENTE VERIFICADAS sobre: "${topic}".
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o", 
+        temperature: 0.1, // Cero inventos, 100% exactitud histórica
+        response_format: { type: "json_object" },
+        messages: [
+          { 
+            role: "system", 
+            content: `Eres un historiador riguroso. Tu única tarea es generar 10 preguntas desafiantes pero RIGUROSAMENTE EXACTAS.
             
-      REGLAS DE ORO:
-      1. NO INVENTES DATOS. Usa hechos históricos comprobables. Si tienes dudas de una fecha o dato, elige otra pregunta.
-      2. FORMATO EXACTO: El valor de "correct" DEBE ser exactamente idéntico a uno de los strings dentro del arreglo "options".
-      3. CERO PREFIJOS: Prohibido usar "A)", "B:", "C: ". Solo devuelve el texto de la opción limpia.
-      4. VARIEDAD: Genera preguntas totalmente nuevas. (Código de sesión único: ${Date.now()})
+            REGLAS CRÍTICAS:
+            1. HECHOS IRREFUTABLES: Usa ÚNICAMENTE datos históricos universalmente comprobables. Cero inventos.
+            2. FORMATO EXACTO: El valor de "correct" DEBE ser idéntico a uno de los strings dentro de "options".
+            3. CERO PREFIJOS: ESTRICTAMENTE PROHIBIDO usar "A)", "B:", "C: ". Solo devuelve el texto limpio de la respuesta.
 
-      ESTRUCTURA JSON REQUERIDA:
-      {
-        "preguntas": [
-          {
-            "q": "¿En qué año se fundó el Club de Fútbol Monterrey (Rayados)?", 
-            "options": ["1945", "1905", "1960", "1950"], 
-            "correct": "1945"
+            DEVUELVE UN JSON con el formato exacto requerido:
+            {
+              "preguntas": [
+                {
+                  "q": "¿En qué año se fundó el Club de Fútbol Monterrey (Rayados)?", 
+                  "options": ["1945", "1905", "1960", "1950"], 
+                  "correct": "1945"
+                }
+              ]
+            }`
+          },
+          { 
+            role: "user", 
+            content: `Genera 10 preguntas TOTALMENTE NUEVAS, 100% verificadas y exactas sobre: "${topic}". (Código de sesión: ${Date.now()})` 
           }
         ]
-      }`;
-
-      const result = await model.generateContent(prompt);
-      const responseText = result.response.text();
+      });
       
-      const cleanContent = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
-      const parsedData = JSON.parse(cleanContent);
+      const rawContent = response.choices[0].message.content;
+      // Limpieza de etiquetas markdown por seguridad
+      const cleanContent = rawContent.replace(/```json/g, '').replace(/```/g, '').trim();
+      const result = JSON.parse(cleanContent);
       
-      const preguntasExactas = parsedData.preguntas.slice(0, 10);
-      
+      // Aseguramos exactamente 10 preguntas
+      const preguntasExactas = result.preguntas.slice(0, 10);
       socket.emit('questions_ready', preguntasExactas);
     } catch (error) { 
-      console.error("Error generando preguntas con Gemini Pro:", error);
+      console.error("Error generando preguntas con OpenAI:", error);
       socket.emit('questions_error'); 
     }
   });
