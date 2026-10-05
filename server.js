@@ -7,7 +7,7 @@ const { OpenAI } = require('openai');
 
 const app = express();
 app.use(cors());
-app.get('/', (req, res) => res.send('✅ Servidor Backend OK (Modo Seguro - OpenAI GPT-4o).'));
+app.get('/', (req, res) => res.send('✅ Servidor Backend OK (Modo OpenAI - Creatividad Controlada).'));
 
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*", methods: ["GET", "POST"] } });
@@ -46,42 +46,42 @@ io.on('connection', (socket) => {
     try {
       const response = await openai.chat.completions.create({
         model: "gpt-4o", 
-        temperature: 0.1, // Cero inventos, 100% exactitud histórica
+        // 🔥 Aumentamos la temperatura para que busque preguntas diferentes cada vez
+        temperature: 0.7, 
         response_format: { type: "json_object" },
         messages: [
           { 
             role: "system", 
-            content: `Eres un historiador riguroso. Tu única tarea es generar 10 preguntas desafiantes pero RIGUROSAMENTE EXACTAS.
+            content: `Eres un historiador riguroso y un animador experto en trivias. Tu tarea es generar 10 preguntas EXACTAS pero MUY VARIADAS.
             
             REGLAS CRÍTICAS:
-            1. HECHOS IRREFUTABLES: Usa ÚNICAMENTE datos históricos universalmente comprobables. Cero inventos.
-            2. FORMATO EXACTO: El valor de "correct" DEBE ser idéntico a uno de los strings dentro de "options".
-            3. CERO PREFIJOS: ESTRICTAMENTE PROHIBIDO usar "A)", "B:", "C: ". Solo devuelve el texto limpio de la respuesta.
+            1. HECHOS IRREFUTABLES: Usa ÚNICAMENTE datos reales y comprobables. Cero inventos.
+            2. VARIEDAD EXTREMA: Evita las preguntas obvias o típicas. Explora diferentes épocas, personajes secundarios, récords, anécdotas y datos curiosos para que el set de preguntas sea único y sorprendente cada vez.
+            3. FORMATO EXACTO: El valor de "correct" DEBE ser idéntico a uno de los strings dentro de "options".
+            4. CERO PREFIJOS: ESTRICTAMENTE PROHIBIDO usar "A)", "B:", "C: ". Solo devuelve el texto limpio.
 
             DEVUELVE UN JSON con el formato exacto requerido:
             {
               "preguntas": [
                 {
-                  "q": "¿En qué año se fundó el Club de Fútbol Monterrey (Rayados)?", 
-                  "options": ["1945", "1905", "1960", "1950"], 
-                  "correct": "1945"
+                  "q": "¿Pregunta sobre un dato curioso, específico y real?", 
+                  "options": ["Opción 1", "Opción 2", "Opción 3", "Opción 4"], 
+                  "correct": "Opción 2"
                 }
               ]
             }`
           },
           { 
             role: "user", 
-            content: `Genera 10 preguntas TOTALMENTE NUEVAS, 100% verificadas y exactas sobre: "${topic}". (Código de sesión: ${Date.now()})` 
+            content: `Genera 10 preguntas TOTALMENTE NUEVAS, creativas y diferentes a lo habitual sobre: "${topic}". Usa datos profundos y no te quedes en lo básico. (Código de aleatoriedad para forzar variedad: ${Date.now()})` 
           }
         ]
       });
       
       const rawContent = response.choices[0].message.content;
-      // Limpieza de etiquetas markdown por seguridad
       const cleanContent = rawContent.replace(/```json/g, '').replace(/```/g, '').trim();
       const result = JSON.parse(cleanContent);
       
-      // Aseguramos exactamente 10 preguntas
       const preguntasExactas = result.preguntas.slice(0, 10);
       socket.emit('questions_ready', preguntasExactas);
     } catch (error) { 
