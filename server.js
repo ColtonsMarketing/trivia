@@ -3,15 +3,20 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
+// 🔥 IMPORTAMOS OPENAI
 const { OpenAI } = require('openai');
 
 const app = express();
 app.use(cors());
-app.get('/', (req, res) => res.send('✅ Servidor Backend OK (Modo OpenAI - Creatividad Controlada).'));
+app.get('/', (req, res) => res.send('✅ Servidor Backend OK (Modo OpenAI activo).'));
 
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*", methods: ["GET", "POST"] } });
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+// 🔥 INICIALIZAMOS OPENAI
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
 
 let players = [];
 let gameActive = false;
@@ -30,7 +35,15 @@ io.on('connection', (socket) => {
   socket.on('update_topic', (topic) => { currentTopic = topic; io.emit('update_topic', currentTopic); });
 
   socket.on('join_game', (userData) => {
-    if (players.length < 20 && !gameActive) {
+    // 🔥 DEFENSA ANTI-FANTASMAS (RECONEXIÓN)
+    // Si el jugador ya existe (por nombre y mesa), solo actualizamos su ID de conexión
+    const existingPlayer = players.find(p => p.name === userData.name && p.table === userData.table);
+    
+    if (existingPlayer) {
+      existingPlayer.id = socket.id;
+      io.emit('update_players', players);
+    } else if (players.length < 20 && !gameActive) {
+      // Si es nuevo y el juego no ha empezado, lo registramos normal
       players.push({ id: socket.id, ...userData, score: 0, answeredCurrentQ: false, eliminated: false });
       io.emit('update_players', players);
     }
@@ -42,47 +55,42 @@ io.on('connection', (socket) => {
     io.to(playerId).emit('kicked');
   });
 
+  // 🔥 MOTOR DE GENERACIÓN CON OPENAI
   socket.on('generate_questions', async (topic) => {
     try {
-      const response = await openai.chat.completions.create({
-        model: "gpt-4o", 
-        // 🔥 Aumentamos la temperatura para que busque preguntas diferentes cada vez
-        temperature: 0.7, 
-        response_format: { type: "json_object" },
-        messages: [
-          { 
-            role: "system", 
-            content: `Eres un historiador riguroso y un animador experto en trivias. Tu tarea es generar 10 preguntas EXACTAS pero MUY VARIADAS.
+      const prompt = `Eres un experto en trivias y un historiador riguroso. Tu tarea es generar 10 preguntas desafiantes y ESTRICTAMENTE VERIFICADAS sobre: "${topic}".
             
-            REGLAS CRÍTICAS:
-            1. HECHOS IRREFUTABLES: Usa ÚNICAMENTE datos reales y comprobables. Cero inventos.
-            2. VARIEDAD EXTREMA: Evita las preguntas obvias o típicas. Explora diferentes épocas, personajes secundarios, récords, anécdotas y datos curiosos para que el set de preguntas sea único y sorprendente cada vez.
-            3. FORMATO EXACTO: El valor de "correct" DEBE ser idéntico a uno de los strings dentro de "options".
-            4. CERO PREFIJOS: ESTRICTAMENTE PROHIBIDO usar "A)", "B:", "C: ". Solo devuelve el texto limpio.
+      REGLAS DE ORO:
+      1. NO INVENTES DATOS. Usa hechos históricos comprobables. Si tienes dudas, elige otra pregunta.
+      2. FORMATO EXACTO: El valor de "correct" DEBE ser exactamente idéntico a uno de los strings dentro del arreglo "options".
+      3. CERO PREFIJOS: Prohibido usar "A)", "B:", "C: ". Solo devuelve el texto de la opción limpia.
+      4. VARIEDAD: Genera preguntas totalmente nuevas. (Código: ${Date.now()})
 
-            DEVUELVE UN JSON con el formato exacto requerido:
-            {
-              "preguntas": [
-                {
-                  "q": "¿Pregunta sobre un dato curioso, específico y real?", 
-                  "options": ["Opción 1", "Opción 2", "Opción 3", "Opción 4"], 
-                  "correct": "Opción 2"
-                }
-              ]
-            }`
-          },
-          { 
-            role: "user", 
-            content: `Genera 10 preguntas TOTALMENTE NUEVAS, creativas y diferentes a lo habitual sobre: "${topic}". Usa datos profundos y no te quedes en lo básico. (Código de aleatoriedad para forzar variedad: ${Date.now()})` 
+      ESTRUCTURA JSON REQUERIDA:
+      {
+        "preguntas": [
+          {
+            "q": "¿En qué año se fundó el Club de Fútbol Monterrey (Rayados)?", 
+            "options": ["1945", "1905", "1960", "1950"], 
+            "correct": "1945"
           }
         ]
+      }`;
+
+      // Configuración forzada a devolver un JSON validado por OpenAI
+      const response = await openai.chat.completions.create({
+        model: "gpt-3.5-turbo-1106", // Puedes usar "gpt-4o" si tu cuenta de OpenAI lo soporta
+        response_format: { type: "json_object" },
+        temperature: 0.2,
+        messages: [
+          { role: "system", content: "Devuelve únicamente JSON estructurado con el formato exacto requerido." },
+          { role: "user", content: prompt }
+        ]
       });
+
+      const parsedData = JSON.parse(response.choices[0].message.content);
+      const preguntasExactas = parsedData.preguntas.slice(0, 10);
       
-      const rawContent = response.choices[0].message.content;
-      const cleanContent = rawContent.replace(/```json/g, '').replace(/```/g, '').trim();
-      const result = JSON.parse(cleanContent);
-      
-      const preguntasExactas = result.preguntas.slice(0, 10);
       socket.emit('questions_ready', preguntasExactas);
     } catch (error) { 
       console.error("Error generando preguntas con OpenAI:", error);
@@ -132,8 +140,13 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', () => {
-    players = players.filter(p => p.id !== socket.id);
-    io.emit('update_players', players);
+    // 🔥 SEGUNDO BLINDAJE ANTI-FANTASMAS
+    // Si el juego NO ha empezado, borramos al jugador. 
+    // Si el juego YA empezó, lo dejamos en la lista para que la auto-reconexión lo rescate y mantenga sus puntos.
+    if (!gameActive) {
+      players = players.filter(p => p.id !== socket.id);
+      io.emit('update_players', players);
+    }
   });
 });
 
