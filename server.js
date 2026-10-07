@@ -3,17 +3,15 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
-// 🔥 IMPORTAMOS OPENAI
 const { OpenAI } = require('openai');
 
 const app = express();
 app.use(cors());
-app.get('/', (req, res) => res.send('✅ Servidor Backend OK (Modo OpenAI activo).'));
+app.get('/', (req, res) => res.send('✅ Servidor Backend OK (Modo OpenAI Activo).'));
 
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*", methods: ["GET", "POST"] } });
 
-// 🔥 INICIALIZAMOS OPENAI
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
@@ -35,15 +33,13 @@ io.on('connection', (socket) => {
   socket.on('update_topic', (topic) => { currentTopic = topic; io.emit('update_topic', currentTopic); });
 
   socket.on('join_game', (userData) => {
-    // 🔥 DEFENSA ANTI-FANTASMAS (RECONEXIÓN)
-    // Si el jugador ya existe (por nombre y mesa), solo actualizamos su ID de conexión
+    // ANTI-FANTASMAS: Si el jugador se desconecta por micro-corte y vuelve, actualizamos su socket ID
     const existingPlayer = players.find(p => p.name === userData.name && p.table === userData.table);
     
     if (existingPlayer) {
       existingPlayer.id = socket.id;
       io.emit('update_players', players);
     } else if (players.length < 20 && !gameActive) {
-      // Si es nuevo y el juego no ha empezado, lo registramos normal
       players.push({ id: socket.id, ...userData, score: 0, answeredCurrentQ: false, eliminated: false });
       io.emit('update_players', players);
     }
@@ -55,16 +51,16 @@ io.on('connection', (socket) => {
     io.to(playerId).emit('kicked');
   });
 
-  // 🔥 MOTOR DE GENERACIÓN CON OPENAI
+  // MOTOR DE GENERACIÓN CORREGIDO (OPENAI gpt-4o-mini)
   socket.on('generate_questions', async (topic) => {
     try {
-      const prompt = `Eres un experto en trivias y un historiador riguroso. Tu tarea es generar 10 preguntas desafiantes y ESTRICTAMENTE VERIFICADAS sobre: "${topic}".
+      const prompt = `Genera un JSON válido con 10 preguntas desafiantes sobre: "${topic}".
             
       REGLAS DE ORO:
-      1. NO INVENTES DATOS. Usa hechos históricos comprobables. Si tienes dudas, elige otra pregunta.
-      2. FORMATO EXACTO: El valor de "correct" DEBE ser exactamente idéntico a uno de los strings dentro del arreglo "options".
-      3. CERO PREFIJOS: Prohibido usar "A)", "B:", "C: ". Solo devuelve el texto de la opción limpia.
-      4. VARIEDAD: Genera preguntas totalmente nuevas. (Código: ${Date.now()})
+      1. NO INVENTES DATOS. Usa hechos históricos comprobables.
+      2. FORMATO EXACTO: El valor de "correct" DEBE ser idéntico a una de las opciones en "options".
+      3. CERO PREFIJOS: Prohibido usar "A)", "B:". Solo el texto de la opción limpia.
+      4. VARIEDAD: Genera preguntas nuevas. Código de sesión: ${Date.now()}
 
       ESTRUCTURA JSON REQUERIDA:
       {
@@ -77,13 +73,15 @@ io.on('connection', (socket) => {
         ]
       }`;
 
-      // Configuración forzada a devolver un JSON validado por OpenAI
       const response = await openai.chat.completions.create({
-        model: "gpt-3.5-turbo-1106", // Puedes usar "gpt-4o" si tu cuenta de OpenAI lo soporta
+        model: "gpt-4o-mini",
         response_format: { type: "json_object" },
         temperature: 0.2,
         messages: [
-          { role: "system", content: "Devuelve únicamente JSON estructurado con el formato exacto requerido." },
+          { 
+            role: "system", 
+            content: "Eres un asistente de trivia que responde EXCLUSIVAMENTE en formato JSON." 
+          },
           { role: "user", content: prompt }
         ]
       });
@@ -140,9 +138,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', () => {
-    // 🔥 SEGUNDO BLINDAJE ANTI-FANTASMAS
-    // Si el juego NO ha empezado, borramos al jugador. 
-    // Si el juego YA empezó, lo dejamos en la lista para que la auto-reconexión lo rescate y mantenga sus puntos.
+    // Solo eliminamos del array si el juego no ha iniciado. Si el juego está activo, los mantenemos para reconexión.
     if (!gameActive) {
       players = players.filter(p => p.id !== socket.id);
       io.emit('update_players', players);
