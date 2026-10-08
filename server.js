@@ -24,6 +24,16 @@ let questionStartTime = 0;
 let currentTopic = "CULTURA GENERAL";
 let currentPrizes = { first: "🍕 1 PIZZA", second: "🍺 2 CERVEZAS", third: "🍟 PAPAS" };
 
+// Función para mezclar arreglos (Evita que la respuesta correcta siempre sea la primera)
+function shuffleArray(array) {
+  const arr = [...array];
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
 io.on('connection', (socket) => {
   socket.emit('update_players', players);
   socket.emit('update_prizes', currentPrizes);
@@ -33,9 +43,7 @@ io.on('connection', (socket) => {
   socket.on('update_topic', (topic) => { currentTopic = topic; io.emit('update_topic', currentTopic); });
 
   socket.on('join_game', (userData) => {
-    // ANTI-FANTASMAS: Si el jugador se desconecta por micro-corte y vuelve, actualizamos su socket ID
     const existingPlayer = players.find(p => p.name === userData.name && p.table === userData.table);
-    
     if (existingPlayer) {
       existingPlayer.id = socket.id;
       io.emit('update_players', players);
@@ -51,24 +59,25 @@ io.on('connection', (socket) => {
     io.to(playerId).emit('kicked');
   });
 
-  // MOTOR DE GENERACIÓN CORREGIDO (OPENAI gpt-4o-mini)
+  // GENERADOR MEJORADO: FUERZA DIVERSIDAD Y MEZCLA OPCIONES
   socket.on('generate_questions', async (topic) => {
     try {
-      const prompt = `Genera un JSON válido con 10 preguntas desafiantes sobre: "${topic}".
+      const seed = Math.floor(Math.random() * 1000000);
+      const prompt = `Genera un JSON válido con 10 preguntas NUNCA ANTES VISTAS, creativas y variadas sobre: "${topic}".
+      Identificador único de sesión: ${Date.now()}-${seed}.
             
       REGLAS DE ORO:
-      1. NO INVENTES DATOS. Usa hechos históricos comprobables.
-      2. FORMATO EXACTO: El valor de "correct" DEBE ser idéntico a una de las opciones en "options".
-      3. CERO PREFIJOS: Prohibido usar "A)", "B:". Solo el texto de la opción limpia.
-      4. VARIEDAD: Genera preguntas nuevas. Código de sesión: ${Date.now()}
+      1. NO repitas preguntas comunes. Usa datos curiosos e interesantes.
+      2. FORMATO EXACTO: El valor de "correct" DEBE ser idéntico a una de las opciones dentro de "options".
+      3. CERO PREFIJOS: Sin "A)", "B:". Solo texto limpio.
 
       ESTRUCTURA JSON REQUERIDA:
       {
         "preguntas": [
           {
-            "q": "¿En qué año se fundó el Club de Fútbol Monterrey (Rayados)?", 
-            "options": ["1945", "1905", "1960", "1950"], 
-            "correct": "1945"
+            "q": "¿Qué elemento químico tiene el símbolo Au?", 
+            "options": ["Oro", "Plata", "Cobre", "Aluminio"], 
+            "correct": "Oro"
           }
         ]
       }`;
@@ -76,20 +85,22 @@ io.on('connection', (socket) => {
       const response = await openai.chat.completions.create({
         model: "gpt-4o-mini",
         response_format: { type: "json_object" },
-        temperature: 0.2,
+        temperature: 0.8, // Mayor creatividad para evitar repeticiones
         messages: [
-          { 
-            role: "system", 
-            content: "Eres un asistente de trivia que responde EXCLUSIVAMENTE en formato JSON." 
-          },
+          { role: "system", content: "Eres un asistente de trivia que responde EXCLUSIVAMENTE en formato JSON." },
           { role: "user", content: prompt }
         ]
       });
 
       const parsedData = JSON.parse(response.choices[0].message.content);
-      const preguntasExactas = parsedData.preguntas.slice(0, 10);
       
-      socket.emit('questions_ready', preguntasExactas);
+      // Mezclamos las opciones de cada pregunta antes de enviarlas al frontend
+      const preguntasProcesadas = parsedData.preguntas.slice(0, 10).map(q => ({
+        ...q,
+        options: shuffleArray(q.options)
+      }));
+      
+      socket.emit('questions_ready', preguntasProcesadas);
     } catch (error) { 
       console.error("Error generando preguntas con OpenAI:", error);
       socket.emit('questions_error'); 
@@ -97,7 +108,9 @@ io.on('connection', (socket) => {
   });
 
   socket.on('start_game', (questions) => {
-    gameActive = true; activeQuestions = questions; currentQuestionIndex = 0;
+    gameActive = true; 
+    activeQuestions = questions; 
+    currentQuestionIndex = 0;
     players.forEach(p => { p.score = 0; p.answeredCurrentQ = false; p.eliminated = false; });
     io.emit('game_started', questions);
     io.emit('initial_pause');
@@ -106,28 +119,46 @@ io.on('connection', (socket) => {
 
   socket.on('sync_question', (index) => {
     currentQuestionIndex = Number(index);
+    
+    // CORRECCIÓN RONDA 5: ELIMINACIÓN EFECTIVA
     if (currentQuestionIndex === 5) {
-      players.forEach(p => { if (Number(p.score) < 2000) p.eliminated = true; });
-      io.emit('update_players', players); io.emit('round_pause');
-      setTimeout(() => { questionStartTime = Date.now(); players.forEach(p => p.answeredCurrentQ = false); io.emit('resume_game'); }, 10000);
+      players.forEach(p => { 
+        if (Number(p.score) < 2000) {
+          p.eliminated = true; 
+        }
+      });
+      io.emit('update_players', players); 
+      io.emit('round_pause');
+      setTimeout(() => { 
+        questionStartTime = Date.now(); 
+        players.forEach(p => p.answeredCurrentQ = false); 
+        io.emit('resume_game'); 
+      }, 10000);
     } else {
-      questionStartTime = Date.now(); players.forEach(p => p.answeredCurrentQ = false);
+      questionStartTime = Date.now(); 
+      players.forEach(p => p.answeredCurrentQ = false);
     }
   });
 
   socket.on('submit_answer', (answerData) => {
-    const player = players.find(p => p.id === socket.id);
-    if (player && activeQuestions.length > 0 && !player.answeredCurrentQ && !player.eliminated) {
-      player.answeredCurrentQ = true;
+    const player = players.find(p => p.id === socket.id || (p.name === answerData.name && p.table === answerData.table));
+    const targetPlayer = player || players.find(p => p.id === socket.id);
+
+    if (targetPlayer && activeQuestions.length > 0 && !targetPlayer.answeredCurrentQ && !targetPlayer.eliminated) {
+      targetPlayer.answeredCurrentQ = true;
       const currentQ = activeQuestions[currentQuestionIndex];
-      let selectedOption = typeof answerData === 'number' ? currentQ.options[answerData] : answerData;
+      let selectedOption = typeof answerData === 'object' ? answerData.opt : answerData;
+      
       const isCorrect = String(selectedOption).trim().toLowerCase() === String(currentQ.correct).trim().toLowerCase();
       const timeRemaining = Math.max(0, 10 - ((Date.now() - questionStartTime) / 1000)); 
 
-      if (isCorrect) { player.score += 1000 + Math.round((timeRemaining / 10) * 1000); } 
-      else { player.score = Math.max(0, player.score - 300); }
+      if (isCorrect) { 
+        targetPlayer.score += 1000 + Math.round((timeRemaining / 10) * 1000); 
+      } else { 
+        targetPlayer.score = Math.max(0, targetPlayer.score - 300); 
+      }
       
-      socket.emit('answer_result', { isCorrect, selectedOption, correctOption: currentQ.correct, newScore: player.score });
+      socket.emit('answer_result', { isCorrect, selectedOption, correctOption: currentQ.correct, newScore: targetPlayer.score });
       io.emit('update_players', players);
     }
   });
@@ -138,7 +169,6 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', () => {
-    // Solo eliminamos del array si el juego no ha iniciado. Si el juego está activo, los mantenemos para reconexión.
     if (!gameActive) {
       players = players.filter(p => p.id !== socket.id);
       io.emit('update_players', players);
