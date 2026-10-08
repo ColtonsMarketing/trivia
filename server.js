@@ -7,24 +7,22 @@ const { OpenAI } = require('openai');
 
 const app = express();
 app.use(cors());
-app.get('/', (req, res) => res.send('✅ Servidor Backend OK (Modo OpenAI Activo).'));
+app.get('/', (req, res) => res.send('✅ Servidor Backend OK (Modo GPT-4o Sports Bar Activo).'));
 
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*", methods: ["GET", "POST"] } });
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 let players = [];
 let gameActive = false;
 let activeQuestions = [];
 let currentQuestionIndex = 0;
 let questionStartTime = 0;
-let currentTopic = "CULTURA GENERAL";
+let currentTopic = "DEPORTES Y CULTURA SPORTS BAR";
 let currentPrizes = { first: "🍕 1 PIZZA", second: "🍺 2 CERVEZAS", third: "🍟 PAPAS" };
 
-// Función para mezclar arreglos (Evita que la respuesta correcta siempre sea la primera)
+// Función Fisher-Yates para aleatorizar las opciones
 function shuffleArray(array) {
   const arr = [...array];
   for (let i = arr.length - 1; i > 0; i--) {
@@ -43,6 +41,7 @@ io.on('connection', (socket) => {
   socket.on('update_topic', (topic) => { currentTopic = topic; io.emit('update_topic', currentTopic); });
 
   socket.on('join_game', (userData) => {
+    // ANTI-FANTASMAS: Reconexión por Nombre + Mesa
     const existingPlayer = players.find(p => p.name === userData.name && p.table === userData.table);
     if (existingPlayer) {
       existingPlayer.id = socket.id;
@@ -59,42 +58,48 @@ io.on('connection', (socket) => {
     io.to(playerId).emit('kicked');
   });
 
-  // GENERADOR MEJORADO: FUERZA DIVERSIDAD Y MEZCLA OPCIONES
+  // 🔥 GENERACIÓN CON GPT-4o Y PROMPT AGRESIVO DE VERIFICACIÓN
   socket.on('generate_questions', async (topic) => {
     try {
       const seed = Math.floor(Math.random() * 1000000);
-      const prompt = `Genera un JSON válido con 10 preguntas NUNCA ANTES VISTAS, creativas y variadas sobre: "${topic}".
-      Identificador único de sesión: ${Date.now()}-${seed}.
-            
-      REGLAS DE ORO:
-      1. NO repitas preguntas comunes. Usa datos curiosos e interesantes.
-      2. FORMATO EXACTO: El valor de "correct" DEBE ser idéntico a una de las opciones dentro de "options".
-      3. CERO PREFIJOS: Sin "A)", "B:". Solo texto limpio.
+      const prompt = `Genera un JSON válido con 10 preguntas MÁXIMAMENTE PRECISAS Y RIGUROSAS sobre: "${topic}".
+
+      CONTEXTO:
+      - Evento en un SPORTS BAR con fanáticos exigentes.
+      - Enfócate en datos duros, récords icónicos, momentos históricos reales y datos curiosos comprobables.
+
+      REGLAS DE ORO Y DOBLE CHECK:
+      1. DOBLE VERIFICACIÓN HISTÓRICA: Chequeo estricto de cada fecha, nombre y estadística. Si hay controversia, desecha la pregunta.
+      2. CERO REPETICIÓN: Cero trivias cliché. Código único: ${Date.now()}-${seed}.
+      3. FORMATO EXACTO: El valor de "correct" DEBE ser idéntico carácter por carácter a uno de los elementos dentro de "options".
+      4. CERO PREFIJOS: Sin "A)", "B:", "1.". Solo la opción limpia.
 
       ESTRUCTURA JSON REQUERIDA:
       {
         "preguntas": [
           {
-            "q": "¿Qué elemento químico tiene el símbolo Au?", 
-            "options": ["Oro", "Plata", "Cobre", "Aluminio"], 
-            "correct": "Oro"
+            "q": "¿En qué año se celebró la primera edición del Super Bowl de la NFL?", 
+            "options": ["1967", "1970", "1965", "1960"], 
+            "correct": "1967"
           }
         ]
       }`;
 
       const response = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
+        model: "gpt-4o",
         response_format: { type: "json_object" },
-        temperature: 0.8, // Mayor creatividad para evitar repeticiones
+        temperature: 0.7,
         messages: [
-          { role: "system", content: "Eres un asistente de trivia que responde EXCLUSIVAMENTE en formato JSON." },
+          { 
+            role: "system", 
+            content: "Eres el motor de trivia definitivo para un Sports Bar. Tu prioridad es la precisión histórica absoluta y la verificación de datos duros. Respondes EXCLUSIVAMENTE en JSON." 
+          },
           { role: "user", content: prompt }
         ]
       });
 
       const parsedData = JSON.parse(response.choices[0].message.content);
       
-      // Mezclamos las opciones de cada pregunta antes de enviarlas al frontend
       const preguntasProcesadas = parsedData.preguntas.slice(0, 10).map(q => ({
         ...q,
         options: shuffleArray(q.options)
@@ -102,7 +107,7 @@ io.on('connection', (socket) => {
       
       socket.emit('questions_ready', preguntasProcesadas);
     } catch (error) { 
-      console.error("Error generando preguntas con OpenAI:", error);
+      console.error("Error generando preguntas con GPT-4o:", error);
       socket.emit('questions_error'); 
     }
   });
@@ -117,10 +122,13 @@ io.on('connection', (socket) => {
     setTimeout(() => { questionStartTime = Date.now(); io.emit('resume_game'); }, 10000);
   });
 
+  // 🔥 SINCRONIZADOR GLOBAL REFORZADO
   socket.on('sync_question', (index) => {
     currentQuestionIndex = Number(index);
     
-    // CORRECCIÓN RONDA 5: ELIMINACIÓN EFECTIVA
+    // Transmitimos a TODOS los celulares la nueva pregunta recibida desde la pantalla
+    io.emit('sync_question', currentQuestionIndex);
+
     if (currentQuestionIndex === 5) {
       players.forEach(p => { 
         if (Number(p.score) < 2000) {
@@ -141,12 +149,12 @@ io.on('connection', (socket) => {
   });
 
   socket.on('submit_answer', (answerData) => {
-    const player = players.find(p => p.id === socket.id || (p.name === answerData.name && p.table === answerData.table));
-    const targetPlayer = player || players.find(p => p.id === socket.id);
+    const targetPlayer = players.find(p => p.id === socket.id) || players.find(p => p.name === answerData.name && p.table === answerData.table);
 
     if (targetPlayer && activeQuestions.length > 0 && !targetPlayer.answeredCurrentQ && !targetPlayer.eliminated) {
       targetPlayer.answeredCurrentQ = true;
       const currentQ = activeQuestions[currentQuestionIndex];
+      
       let selectedOption = typeof answerData === 'object' ? answerData.opt : answerData;
       
       const isCorrect = String(selectedOption).trim().toLowerCase() === String(currentQ.correct).trim().toLowerCase();
