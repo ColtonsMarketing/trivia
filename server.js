@@ -59,31 +59,68 @@ io.on('connection', (socket) => {
   });
 
   // 🔥 GENERACIÓN CON GPT-4o Y PROMPT AGRESIVO DE VERIFICACIÓN
+  // 🔥 MOTOR DE GENERACIÓN CON GPT-4o (PROMPT EN INGLÉS - LOCALIZADO MTY)
   socket.on('generate_questions', async (topic) => {
     try {
       const seed = Math.floor(Math.random() * 1000000);
-      const prompt = `Genera un JSON válido con 10 preguntas MÁXIMAMENTE PRECISAS Y RIGUROSAS sobre: "${topic}".
+      
+      const prompt = `Generate a valid JSON with 10 HIGHLY ACCURATE, FRESH, AND DEEP trivia questions about: "${topic}". 
+      IMPORTANT: ALL generated questions and options MUST be written in SPANISH.
 
-      CONTEXTO:
-      - Evento en un SPORTS BAR con fanáticos exigentes.
-      - Enfócate en datos duros, récords icónicos, momentos históricos reales y datos curiosos comprobables.
+      CONTEXT & ATMOSPHERE (EXPERT LEVEL):
+      - This trivia is played in a Sports Bar in Monterrey, Mexico. The players are hardcore, highly demanding sports fans who already know all the common trivia.
+      - Entropy seed: ${seed}. Use this random seed to force your search into a completely different sub-topic, obscure decade, bizarre anecdote, or highly specific record every single time. Never repeat previous patterns.
 
-      REGLAS DE ORO Y DOBLE CHECK:
-      1. DOBLE VERIFICACIÓN HISTÓRICA: Chequeo estricto de cada fecha, nombre y estadística. Si hay controversia, desecha la pregunta.
-      2. CERO REPETICIÓN: Cero trivias cliché. Código único: ${Date.now()}-${seed}.
-      3. FORMATO EXACTO: El valor de "correct" DEBE ser idéntico carácter por carácter a uno de los elementos dentro de "options".
-      4. CERO PREFIJOS: Sin "A)", "B:", "1.". Solo la opción limpia.
+      DATA SOURCES & LOCAL FOCUS:
+      - Cross-reference multiple reliable sports databases, historical archives, and official records. Do not rely on surface-level knowledge.
+      - Whenever the topic is about soccer or general sports, heavily prioritize deep, obscure facts about "Liga MX", "Club Tigres UANL", and "Rayados de Monterrey". 
 
-      ESTRUCTURA JSON REQUERIDA:
+      GOLDEN RULES (ANTI-CLICHÉ & DOUBLE CHECK):
+      1. EXTREME DEPTH: BANNED are the most famous or superficial facts (e.g., who won the first World Cup, basic Messi/Jordan/Brady stats). Only use famous entities if asking about an absurdly obscure detail.
+      2. MANDATORY VARIETY: Explore forgotten rules, secondary players, strange streaks, old stadiums, or bizarre historical moments.
+      3. STRICT FACT-CHECKING: Double-check every date, name, and stat across multiple sources before generating. If there is any historical controversy or doubt, DISCARD the question entirely.
+      4. EXACT FORMAT: The string in "correct" MUST be identical, character by character, to one of the strings inside the "options" array.
+      5. NO PREFIXES: Do not use "A)", "B:", "1.", etc. Clean text only.
+
+      REQUIRED JSON STRUCTURE:
       {
         "preguntas": [
           {
-            "q": "¿En qué año se celebró la primera edición del Super Bowl de la NFL?", 
-            "options": ["1967", "1970", "1965", "1960"], 
-            "correct": "1967"
+            "q": "¿Qué jugador anotó el gol decisivo para Tigres en la final del Apertura 2011, rompiendo una sequía de casi 30 años?", 
+            "options": ["Héctor Mancilla", "Damián Álvarez", "Danilinho", "Lucas Lobos"], 
+            "correct": "Héctor Mancilla"
           }
         ]
       }`;
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o", 
+        response_format: { type: "json_object" },
+        temperature: 0.9, // Creatividad alta combinada con el entropy seed para evitar repeticiones
+        messages: [
+          { 
+            role: "system", 
+            content: "You are the ultimate trivia engine for a Sports Bar in Mexico. Your priority is obscure depth, avoiding clichés at all costs, maintaining absolute historical accuracy by cross-referencing multiple sources, and responding EXCLUSIVELY in JSON format. Output content in Spanish." 
+          },
+          { role: "user", content: prompt }
+        ]
+      });
+
+      const parsedData = JSON.parse(response.choices[0].message.content);
+      
+      // Mezclamos las opciones de nuevo para asegurar aleatoriedad en la interfaz
+      const preguntasProcesadas = parsedData.preguntas.slice(0, 10).map(q => ({
+        ...q,
+        options: shuffleArray(q.options)
+      }));
+      
+      socket.emit('questions_ready', preguntasProcesadas);
+    } catch (error) { 
+      console.error("Error generando preguntas con GPT-4o:", error);
+      socket.emit('questions_error'); 
+    }
+  });
+  
 
       const response = await openai.chat.completions.create({
         model: "gpt-4o",
