@@ -7,7 +7,7 @@ const { OpenAI } = require('openai');
 
 const app = express();
 app.use(cors());
-app.get('/', (req, res) => res.send('✅ Servidor Backend OK (Modo GPT-4o Sports Bar Activo).'));
+app.get('/', (req, res) => res.send('✅ Servidor Backend OK (Modo GPT-4o Sports Bar).'));
 
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*", methods: ["GET", "POST"] } });
@@ -22,7 +22,6 @@ let questionStartTime = 0;
 let currentTopic = "DEPORTES Y CULTURA SPORTS BAR";
 let currentPrizes = { first: "🍕 1 PIZZA", second: "🍺 2 CERVEZAS", third: "🍟 PAPAS" };
 
-// Función Fisher-Yates para aleatorizar las opciones
 function shuffleArray(array) {
   const arr = [...array];
   for (let i = arr.length - 1; i > 0; i--) {
@@ -41,11 +40,15 @@ io.on('connection', (socket) => {
   socket.on('update_topic', (topic) => { currentTopic = topic; io.emit('update_topic', currentTopic); });
 
   socket.on('join_game', (userData) => {
-    // ANTI-FANTASMAS: Reconexión por Nombre + Mesa
+    // ANTI-FANTASMAS Y RESINCRONIZACIÓN
     const existingPlayer = players.find(p => p.name === userData.name && p.table === userData.table);
     if (existingPlayer) {
       existingPlayer.id = socket.id;
       io.emit('update_players', players);
+      if (gameActive) {
+        socket.emit('game_started', activeQuestions);
+        socket.emit('sync_question', currentQuestionIndex);
+      }
     } else if (players.length < 20 && !gameActive) {
       players.push({ id: socket.id, ...userData, score: 0, answeredCurrentQ: false, eliminated: false });
       io.emit('update_players', players);
@@ -58,29 +61,28 @@ io.on('connection', (socket) => {
     io.to(playerId).emit('kicked');
   });
 
-  // 🔥 GENERACIÓN CON GPT-4o Y PROMPT AGRESIVO DE VERIFICACIÓN
-  // 🔥 MOTOR DE GENERACIÓN CON GPT-4o (PROMPT EN INGLÉS - LOCALIZADO MTY)
+  // 🔥 MOTOR DE GENERACIÓN CON GPT-4o (PROMPT EN INGLÉS - ANTI-REFRASEO)
   socket.on('generate_questions', async (topic) => {
     try {
       const seed = Math.floor(Math.random() * 1000000);
-      
       const prompt = `Generate a valid JSON with 10 HIGHLY ACCURATE, FRESH, AND DEEP trivia questions about: "${topic}". 
       IMPORTANT: ALL generated questions and options MUST be written in SPANISH.
 
-      CONTEXT & ATMOSPHERE (EXPERT LEVEL):
-      - This trivia is played in a Sports Bar in Monterrey, Mexico. The players are hardcore, highly demanding sports fans who already know all the common trivia.
-      - Entropy seed: ${seed}. Use this random seed to force your search into a completely different sub-topic, obscure decade, bizarre anecdote, or highly specific record every single time. Never repeat previous patterns.
+      CRITICAL RULE AGAINST REPETITION (NO REPHRASING):
+      - You are STRICTLY FORBIDDEN from asking about the same fact, entity, or event twice.
+      - DO NOT just rephrase the same question (e.g., if one question is about a release year, the other 9 MUST NOT be about that release year).
+      - Each of the 10 questions MUST cover a completely different angle or sub-category.
+      - Entropy seed: ${seed}. Use this to force your search into bizarre anecdotes, obscure decades, or highly specific records.
 
       DATA SOURCES & LOCAL FOCUS:
-      - Cross-reference multiple reliable sports databases, historical archives, and official records. Do not rely on surface-level knowledge.
-      - Whenever the topic is about soccer or general sports, heavily prioritize deep, obscure facts about "Liga MX", "Club Tigres UANL", and "Rayados de Monterrey". 
+      - Cross-reference multiple reliable databases.
+      - If the topic is sports/soccer, prioritize obscure facts about "Liga MX", "Club Tigres UANL", and "Rayados de Monterrey".
 
-      GOLDEN RULES (ANTI-CLICHÉ & DOUBLE CHECK):
-      1. EXTREME DEPTH: BANNED are the most famous or superficial facts (e.g., who won the first World Cup, basic Messi/Jordan/Brady stats). Only use famous entities if asking about an absurdly obscure detail.
-      2. MANDATORY VARIETY: Explore forgotten rules, secondary players, strange streaks, old stadiums, or bizarre historical moments.
-      3. STRICT FACT-CHECKING: Double-check every date, name, and stat across multiple sources before generating. If there is any historical controversy or doubt, DISCARD the question entirely.
-      4. EXACT FORMAT: The string in "correct" MUST be identical, character by character, to one of the strings inside the "options" array.
-      5. NO PREFIXES: Do not use "A)", "B:", "1.", etc. Clean text only.
+      GOLDEN RULES:
+      1. EXTREME DEPTH: Banned are the most famous or superficial facts.
+      2. STRICT FACT-CHECKING: Double-check every date, name, and stat. Discard if controversial.
+      3. EXACT FORMAT: The string in "correct" MUST be identical to one of the strings inside the "options" array.
+      4. NO PREFIXES: Do not use "A)", "B:", "1.", etc. Clean text only.
 
       REQUIRED JSON STRUCTURE:
       {
@@ -96,40 +98,11 @@ io.on('connection', (socket) => {
       const response = await openai.chat.completions.create({
         model: "gpt-4o", 
         response_format: { type: "json_object" },
-        temperature: 0.9, // Creatividad alta combinada con el entropy seed para evitar repeticiones
+        temperature: 0.95,
         messages: [
           { 
             role: "system", 
-            content: "You are the ultimate trivia engine for a Sports Bar in Mexico. Your priority is obscure depth, avoiding clichés at all costs, maintaining absolute historical accuracy by cross-referencing multiple sources, and responding EXCLUSIVELY in JSON format. Output content in Spanish." 
-          },
-          { role: "user", content: prompt }
-        ]
-      });
-
-      const parsedData = JSON.parse(response.choices[0].message.content);
-      
-      // Mezclamos las opciones de nuevo para asegurar aleatoriedad en la interfaz
-      const preguntasProcesadas = parsedData.preguntas.slice(0, 10).map(q => ({
-        ...q,
-        options: shuffleArray(q.options)
-      }));
-      
-      socket.emit('questions_ready', preguntasProcesadas);
-    } catch (error) { 
-      console.error("Error generando preguntas con GPT-4o:", error);
-      socket.emit('questions_error'); 
-    }
-  });
-  
-
-      const response = await openai.chat.completions.create({
-        model: "gpt-4o",
-        response_format: { type: "json_object" },
-        temperature: 0.7,
-        messages: [
-          { 
-            role: "system", 
-            content: "Eres el motor de trivia definitivo para un Sports Bar. Tu prioridad es la precisión histórica absoluta y la verificación de datos duros. Respondes EXCLUSIVAMENTE en JSON." 
+            content: "You are the ultimate trivia engine. Your absolute priority is to NEVER ask the same fact twice. Force yourself to find 10 completely distinct facts about the topic. Respond EXCLUSIVELY in JSON format. Output in Spanish." 
           },
           { role: "user", content: prompt }
         ]
@@ -162,8 +135,6 @@ io.on('connection', (socket) => {
   // 🔥 SINCRONIZADOR GLOBAL REFORZADO
   socket.on('sync_question', (index) => {
     currentQuestionIndex = Number(index);
-    
-    // Transmitimos a TODOS los celulares la nueva pregunta recibida desde la pantalla
     io.emit('sync_question', currentQuestionIndex);
 
     if (currentQuestionIndex === 5) {
